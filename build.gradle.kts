@@ -21,6 +21,11 @@ dependencies {
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-reactive-pg-client")
     implementation("io.quarkus:quarkus-arc")
+
+
+    implementation("org.projectlombok:lombok:1.18.30")
+    annotationProcessor("org.projectlombok:lombok:1.18.30")
+
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.rest-assured:rest-assured")
 }
