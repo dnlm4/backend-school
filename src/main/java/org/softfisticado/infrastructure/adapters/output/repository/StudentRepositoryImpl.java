@@ -1,5 +1,6 @@
 package org.softfisticado.infrastructure.adapters.output.repository;
 
+import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.pgclient.PgPool;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -45,4 +46,11 @@ public class StudentRepositoryImpl implements StudentRepository {
     public Uni findById(Long id) {
         return studentCrudRepository.findById(id,new StudentEntity());
     }
+
+    @Override
+    public Multi findAll() {
+        return studentCrudRepository.findAll(new StudentEntity());
+    }
+
+
 }

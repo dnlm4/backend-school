@@ -1,5 +1,6 @@
 package org.softfisticado.application.usecases;
 
+import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
@@ -24,6 +25,10 @@ public class StudentUseCase {
     }
     public Uni findById(Long id) {
         return studentRepository.findById(id);
+    }
+
+    public Multi findAll() {
+        return studentRepository.findAll();
     }
 
 }

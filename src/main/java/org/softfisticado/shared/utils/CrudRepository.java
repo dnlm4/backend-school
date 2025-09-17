@@ -1,5 +1,6 @@
 package org.softfisticado.shared.utils;
 
+import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 
 
@@ -9,5 +10,7 @@ public interface CrudRepository<E> {
     Uni delete(Long id,E entity);
 
     Uni findById(Long id,E entity);
+
+    Multi findAll(E entity);
 
 }

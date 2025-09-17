@@ -1,18 +1,17 @@
 package org.softfisticado.shared.utils;
 
+import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.pgclient.PgPool;
 import io.vertx.mutiny.sqlclient.Row;
+import io.vertx.mutiny.sqlclient.RowSet;
 import io.vertx.mutiny.sqlclient.Tuple;
 import jakarta.inject.Inject;
-import jakarta.persistence.Table;
 import jakarta.ws.rs.core.Response;
 import org.softfisticado.infrastructure.persistence.mapper.RowValueExtractor;
 
 import java.lang.reflect.Field;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 
 public class CrudRepositoryImpl<E> implements CrudRepository<E> {
@@ -72,59 +71,238 @@ public class CrudRepositoryImpl<E> implements CrudRepository<E> {
 
     @Override
     public Uni findById(Long id,E entity) {
-        String table = fieldProcess.getTableName(entity);
-        Field[] fields = fieldProcess.getFields(entity);
-        fieldProcess.select(fields);
-        String sqlQuery = "SELECT " + fieldProcess.getAttributesNames()+ " FROM school."+ table +" WHERE id = $1";
-        System.out.println("sqlQuery"+sqlQuery);
+        String tableName = fieldProcess.getTableName(entity);
+        Field[] fieldsTable = fieldProcess.getFields(entity);
+        fieldProcess.select(fieldsTable);
+        String sqlQueryTable = "SELECT "+fieldProcess.getAttributesNames()+" FROM school."+ tableName +" WHERE id = $1";
         return pgPool
-                .preparedQuery(sqlQuery)
+                .preparedQuery(sqlQueryTable)
                 .execute(Tuple.of(id))
-                .onItem()
-                .transform(pgRowSet->{
-                    Row row = pgRowSet.iterator().hasNext() ? pgRowSet.iterator().next() : null;
-
-                    if(row==null)return null;
-                    Map<String,Object> map = new HashMap<>();
-                    for(Map<Class<?>,Object> field: fieldProcess.getListAttributeMapTypeName()){
-                        Class<?> key=null;
-                        String nameField="";
-                        for (Map.Entry<Class<?>, Object> entry : field.entrySet()) {
-                            key = entry.getKey();
-                            if(!key.getName().startsWith("java")){
+                .onItem().transformToUni(pgRowSet->{
+                    Row rowTable = pgRowSet.iterator().hasNext() ? pgRowSet.iterator().next() : null;
+                    if(rowTable==null)return null;
+                    Map<String,Object> returnMap = new HashMap<>();
+                    String joinTableName="";
+                    Object joinTableIdValue = null;
+                    String joinColumnName="";
+                    List<Map<Class<?>,Object>> listJointTableAttributeMapTypeName = new ArrayList<>(List.of());
+                    tableFor:
+                    for(Map<Class<?>,Object> fieldTable:fieldProcess.getListAttributeMapTypeName()){
+                        Class<?> keyTable = null;
+                        String nameFieldTable = "";
+                        Object valueFieldTable = null;
+                        for(Map.Entry<Class<?>,Object> entryTable:fieldTable.entrySet()){
+                            keyTable = entryTable.getKey();
+                            nameFieldTable = entryTable.getValue().toString();
+                            if(!keyTable.getName().startsWith("java")){
                                 try {
-                                    Class<?> clazz = Class.forName(key.getName());
-                                    System.out.println("------------------------ ");
-                                    System.out.println("xxxxx   "+ Arrays.toString(clazz.getAnnotations()));
-                                    System.out.println("wwwwwww   "+ clazz.getAnnotation(Table.class));
-                                    System.out.println("ggggggggg   "+ clazz.getAnnotation(Table.class).name());
-                                    System.out.println("------------------------ ");
-                                    FieldProcess<E> joinFieldProcess = new FieldProcess<E>();
-                                    String joinTable = joinFieldProcess.getJoinTableName(clazz);
-                                    System.out.println("joinTable "+joinTable);
-                                    Field[] joinFields = joinFieldProcess.getFields(clazz);
-                                    joinFieldProcess.select(joinFields);
-                                    String sqlQueryJoin = "SELECT " + joinFieldProcess.getAttributesNames()+ " FROM school."+ joinTable +" WHERE id = $1";
-                                    System.out.println("sqlQueryJoin"+sqlQueryJoin);
-                                    for (Field joinField : joinFields) {
-                                        System.out.println("Campo: " + joinField.getName() + " - Tipo: " + joinField.getType().getSimpleName());
+                                    Class<?> classEntityJoin = Class.forName(keyTable.getName());
+                                    FieldProcess<E> fieldProcessJoin = new FieldProcess<>();
+                                    joinTableName = fieldProcessJoin.getJoinTableName(classEntityJoin);
+                                    Field[] fieldsJoinTable = fieldProcessJoin.getJoinFields(classEntityJoin);
+                                    fieldProcessJoin.selectJoinTable(fieldsJoinTable);
+                                    joinColumnName = fieldProcessJoin.getJointTableAttributesNames();
+                                    listJointTableAttributeMapTypeName = fieldProcessJoin.getListJointTableAttributeMapTypeName();
+                                    forJoinTable:
+                                    for (Map<Class<?>,Object> joinField : listJointTableAttributeMapTypeName) {
+                                        for (Map.Entry<Class<?>, Object> entryJoin : joinField.entrySet()) {
+                                            if(Objects.equals(entryJoin.getValue().toString(), "id")){
+                                                joinTableIdValue = RowValueExtractor.getValue(rowTable,nameFieldTable,entryJoin.getKey());
+                                                break forJoinTable;
+                                            }
+                                        }
                                     }
-                                } catch (ClassNotFoundException e) {
+                                    continue tableFor;
+                                }catch (ClassNotFoundException e){
                                     throw new RuntimeException(e);
                                 }
                             }
-
-                            nameField = entry.getValue().toString();
-
                         }
-                        map.put(nameField,RowValueExtractor.getValue(row,nameField,key));
+                        valueFieldTable=RowValueExtractor.getValue(rowTable,nameFieldTable,keyTable);
+                        returnMap.put(nameFieldTable,valueFieldTable);
                     }
-                    System.out.println("RowValueExtractor    "+map);
+                    String sqlQueryJoin = "SELECT " + joinColumnName + " FROM school."+ joinTableName +" WHERE id = $1";
+                    Map<String,Object> mapJoin = new HashMap<>();
+                    List<Map<Class<?>, Object>> finalListJointTableAttributeMapTypeName = listJointTableAttributeMapTypeName;
+                    String finalJoinTableName = joinTableName;
+                    return pgPool.preparedQuery(sqlQueryJoin)
+                            .execute(Tuple.of(joinTableIdValue))
+                            .onItem()
+                            .transform(joinTableSet->{
+                                Row rowTableJoin = joinTableSet.iterator().hasNext() ? joinTableSet.iterator().next() : null;
+                                if(rowTableJoin==null)return null;
+                                String nameFieldTableJoin ="";
+                                Object valueFieldTableJoin = null;
+                                for (Map<Class<?>, Object> joinField : finalListJointTableAttributeMapTypeName) {
+                                    nameFieldTableJoin = "";
+                                    Class<?> joinKey = null;
+                                    for (Map.Entry<Class<?>, Object> entryJoin : joinField.entrySet()) {
+                                        joinKey = entryJoin.getKey();
+                                        nameFieldTableJoin = entryJoin.getValue().toString();
 
-                    return map;
+                                    }
+                                    valueFieldTableJoin = RowValueExtractor.getValue(rowTableJoin, nameFieldTableJoin, joinKey);
+                                    mapJoin.put(nameFieldTableJoin, valueFieldTableJoin);
+                                }
+                                returnMap.put(finalJoinTableName,mapJoin);
+                                return returnMap;
+                            });
+
+
+
                 });
     }
 
 
+    private Uni<Map<String,RowSet>> selectFromTable(List<CrudEntity> listTables){
+        Map<String,RowSet> results = new HashMap<>();
+        Uni<Map<String,RowSet>> uni = Uni.createFrom().item(results);
+        for(CrudEntity entity:listTables){
+            String sqlQueryTable ="SELECT "+entity.getNameFieldsJoinColumnName()+" FROM school."+ entity.getNameJoinTable();
+            System.out.println(sqlQueryTable);
+            uni = uni.onItem()
+                    .transformToUni(map->
+                        pgPool.preparedQuery(sqlQueryTable)
+                                .execute()
+                                .onItem().invoke(rowSet-> {
 
+                                    System.out.println("Execute selectFromTable");
+                                    map.put(entity.getNameJoinTable(), rowSet);
+                                })
+                                .replaceWith(map));
+        }
+        return uni;
+    }
+
+    @Override
+    public Multi findAll(E entity){
+        String tableName = fieldProcess.getTableName(entity);
+        Field[] fieldsTable = fieldProcess.getFields(entity);
+        fieldProcess.select(fieldsTable);
+        String sqlQueryTable = "SELECT "+fieldProcess.getAttributesNames()+" FROM school."+ tableName;
+        Multi<Row> smtp = pgPool.preparedQuery(sqlQueryTable).execute()
+                .onItem()
+                .transformToMulti(rows->Multi.createFrom().iterable(rows))
+                .invoke(rows->{
+                    System.out.println("Execute smtp");
+                });
+        List<CrudEntity> listCrudEntity=fieldProcess.getListCrudEntity();
+        Uni<Map<String,RowSet>> dataJoinTable=this.selectFromTable(listCrudEntity);
+
+        return smtp.onItem()
+                .transformToUniAndConcatenate(tableRow->{
+                    //Long idTableJoin = 0L;
+                    String tableJoinName = "";
+                    String joinTableFieldsName = "";
+                    Class<?> keyTable = null;
+                    Map<String,Object> mapReturn = new HashMap<>();
+                    String nameFieldTable = "";
+                    for(Map<Class<?>,Object> fieldTable:fieldProcess.getListAttributeMapTypeName()){
+                        for(Map.Entry<Class<?>,Object> entryTable:fieldTable.entrySet()){
+                            keyTable = entryTable.getKey();
+                            if(!keyTable.getName().startsWith("java")){
+                                continue;
+                            }
+                            nameFieldTable= entryTable.getValue().toString();
+                            mapReturn.put(nameFieldTable,RowValueExtractor.getValue(tableRow,nameFieldTable,keyTable));
+                        }
+                    }
+                    if(listCrudEntity!=null){
+                        return dataJoinTable.onItem()
+                                .transform(jointTableRows->{
+                                    System.out.println("vvvvvvvvv");
+                                    RowSet<Row> rowSet = null;
+                                    String joinTableName= "";
+                                    for(Map.Entry<String,RowSet> entryMapJoinTable: jointTableRows.entrySet()){
+                                        rowSet = entryMapJoinTable.getValue();
+                                        joinTableName = entryMapJoinTable.getKey();
+                                    }
+                                    Map<String,Object> mapJoin = new HashMap<>();
+                                    Long idJoinTable = 0L;
+                                    assert rowSet != null;
+                                    rowFor:
+                                    for(Row row:rowSet){
+                                        Long idTable = row.getLong("id");
+                                        System.out.println(row);
+                                        for(CrudEntity crudEntity:listCrudEntity){
+                                            if(crudEntity.getNameJoinTable().equals(joinTableName)){
+                                                idJoinTable = (Long) RowValueExtractor.getValue(tableRow,crudEntity.getNameFieldIdJoinTable(),Long.class);
+                                                if(Objects.equals(idTable, idJoinTable)){
+                                                    for(Map<Class<?>, String> mapTypeName:crudEntity.getJoinTableTypeName()){
+                                                        for(Map.Entry<Class<?>, String> entryMapJoin:mapTypeName.entrySet()){
+                                                            mapJoin.put(entryMapJoin.getValue(),RowValueExtractor.getValue(row,entryMapJoin.getValue(),entryMapJoin.getKey()));
+                                                        }
+                                                    }
+                                                    break rowFor;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    mapReturn.put(joinTableName,mapJoin);
+
+                                    System.out.println("vvvvvvv");
+
+                                    return mapReturn;
+                                });
+                    }
+                    return Uni.createFrom().item(tableRow);
+        });
+
+    }
+    /*public Multi findAll(E entity){
+        String tableName = fieldProcess.getTableName(entity);
+        Field[] fieldsTable = fieldProcess.getFields(entity);
+        fieldProcess.select(fieldsTable);
+        String sqlQueryTable = "SELECT "+fieldProcess.getAttributesNames()+" FROM school."+ tableName;
+        Multi<Row> smtp = pgPool.preparedQuery(sqlQueryTable).execute()
+                .onItem()
+                .transformToMulti(rows->Multi.createFrom().iterable(rows));
+        return smtp.onItem()
+                .transformToUniAndConcatenate(tableRow->{
+                    List<CrudEntity> listCrudEntity=fieldProcess.getListCrudEntity();
+                    Long idTableJoin = 0L;
+                    String tableJoinName = "";
+                    String joinTableFieldsName = "";
+                    Class<?> keyTable = null;
+                    Map<String,Object> mapReturn = new HashMap<>();
+                    String nameFieldTable = "";
+                    for(Map<Class<?>,Object> fieldTable:fieldProcess.getListAttributeMapTypeName()){
+                        for(Map.Entry<Class<?>,Object> entryTable:fieldTable.entrySet()){
+                            keyTable = entryTable.getKey();
+                            if(!keyTable.getName().startsWith("java")){
+                                continue;
+                            }
+                            nameFieldTable= entryTable.getValue().toString();
+                            mapReturn.put(nameFieldTable,RowValueExtractor.getValue(tableRow,nameFieldTable,keyTable));
+                        }
+                    }
+                    if(listCrudEntity!=null){
+                        for(CrudEntity mapJoinTable:listCrudEntity){
+                            tableJoinName = mapJoinTable.getNameJoinTable();
+                            joinTableFieldsName = mapJoinTable.getNameFieldsJoinColumnName();
+                            idTableJoin = (Long) RowValueExtractor.getValue(tableRow,mapJoinTable.getNameFieldIdJoinTable(),long.class);
+                        }
+                        String sqlQueryTableJoin= "SELECT " + joinTableFieldsName + " FROM school."+ tableJoinName +" WHERE id = $1";
+                        Uni<RowSet<Row>> joinTableUni = pgPool.preparedQuery(sqlQueryTableJoin)
+                                .execute(Tuple.of(idTableJoin));
+                        String finalTableJoinName = tableJoinName;
+                        return  joinTableUni.onItem()
+                                .transform(joinTableRows->{
+                                    Map<String,Object> mapJoinTable = new HashMap<>();
+                                    for(CrudEntity crudEntity:listCrudEntity){
+                                        for(Map<Class<?>, String> fieldJoinTable:crudEntity.getJoinTableTypeName()){
+                                            for(Map.Entry<Class<?>, String> entryJoinTable:fieldJoinTable.entrySet()){
+                                                for (Row row : joinTableRows) {
+                                                    mapJoinTable.put(entryJoinTable.getValue(),RowValueExtractor.getValue(row,entryJoinTable.getValue(),entryJoinTable.getKey()));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    mapReturn.put(finalTableJoinName,mapJoinTable);
+                                    return mapReturn;
+                                });
+                    }
+                    return Uni.createFrom().item(tableRow);
+                });
+    }*/
 }

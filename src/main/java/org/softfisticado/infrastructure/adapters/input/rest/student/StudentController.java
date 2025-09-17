@@ -2,6 +2,7 @@ package org.softfisticado.infrastructure.adapters.input.rest.student;
 
 
 import io.smallrye.common.annotation.NonBlocking;
+import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -59,5 +60,11 @@ public class StudentController {
     @Path("{id}")
     public Uni<Response> findById(@PathParam("id")Long id) {
         return studentUseCase.findById(id);
+    }
+
+    @GET
+    @Path("all")
+    public Multi<Response> findAll() {
+        return studentUseCase.findAll();
     }
 }
