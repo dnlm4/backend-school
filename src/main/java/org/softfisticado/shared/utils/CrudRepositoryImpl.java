@@ -12,6 +12,8 @@ import org.softfisticado.infrastructure.persistence.mapper.RowValueExtractor;
 
 import java.lang.reflect.Field;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 
 public class CrudRepositoryImpl<E> implements CrudRepository<E> {
@@ -154,6 +156,7 @@ public class CrudRepositoryImpl<E> implements CrudRepository<E> {
     }
 
 
+
     private Uni<Map<String,RowSet>> selectFromTable(List<CrudEntity> listTables){
         Map<String,RowSet> results = new HashMap<>();
         Uni<Map<String,RowSet>> uni = Uni.createFrom().item(results);
@@ -165,8 +168,6 @@ public class CrudRepositoryImpl<E> implements CrudRepository<E> {
                         pgPool.preparedQuery(sqlQueryTable)
                                 .execute()
                                 .onItem().invoke(rowSet-> {
-
-                                    System.out.println("Execute selectFromTable");
                                     map.put(entity.getNameJoinTable(), rowSet);
                                 })
                                 .replaceWith(map));
@@ -174,8 +175,34 @@ public class CrudRepositoryImpl<E> implements CrudRepository<E> {
         return uni;
     }
 
+    private Multi<Row>  selectTable(String fieldsTable,String tableName){
+        String sqlQueryTable ="SELECT "+fieldsTable+" FROM school."+ tableName;
+        return  pgPool.preparedQuery(sqlQueryTable)
+                .execute()
+                .onItem().transformToMulti(rows -> Multi.createFrom().iterable(rows)
+                        .onOverflow().buffer(100));
+
+    }
+
     @Override
     public Multi findAll(E entity){
+        String tableName = fieldProcess.getTableName(entity);
+        Field[] fieldsTable = entity.getClass().getDeclaredFields();
+        String tableFieldNames = fieldProcess.getAttributesNames();
+        fieldProcess.select(fieldsTable);
+        String sqlQueryTable ="SELECT "+tableFieldNames+" FROM school."+ tableName;
+        Multi<Row> smtp = selectTable(tableFieldNames,tableName);
+        List<CrudEntity> listCrudEntity=fieldProcess.getListCrudEntity();
+        Map<String,RowSet> mapCrudEntity = new HashMap<>();
+        for(CrudEntity crudEntity:listCrudEntity){
+            Multi<Row> smtpJoin =selectTable(crudEntity.getNameFieldsJoinColumnName(), crudEntity.getNameJoinTable());
+            mapCrudEntity.put(crudEntity.getNameJoinTable(),smtpJoin);
+        }
+
+
+    }
+
+    /*public Multi findAll(E entity){
         String tableName = fieldProcess.getTableName(entity);
         Field[] fieldsTable = fieldProcess.getFields(entity);
         fieldProcess.select(fieldsTable);
@@ -191,9 +218,6 @@ public class CrudRepositoryImpl<E> implements CrudRepository<E> {
 
         return smtp.onItem()
                 .transformToUniAndConcatenate(tableRow->{
-                    //Long idTableJoin = 0L;
-                    String tableJoinName = "";
-                    String joinTableFieldsName = "";
                     Class<?> keyTable = null;
                     Map<String,Object> mapReturn = new HashMap<>();
                     String nameFieldTable = "";
@@ -207,48 +231,43 @@ public class CrudRepositoryImpl<E> implements CrudRepository<E> {
                             mapReturn.put(nameFieldTable,RowValueExtractor.getValue(tableRow,nameFieldTable,keyTable));
                         }
                     }
-                    if(listCrudEntity!=null){
-                        return dataJoinTable.onItem()
-                                .transform(jointTableRows->{
-                                    System.out.println("vvvvvvvvv");
-                                    RowSet<Row> rowSet = null;
-                                    String joinTableName= "";
-                                    for(Map.Entry<String,RowSet> entryMapJoinTable: jointTableRows.entrySet()){
-                                        rowSet = entryMapJoinTable.getValue();
-                                        joinTableName = entryMapJoinTable.getKey();
-                                    }
-                                    Map<String,Object> mapJoin = new HashMap<>();
-                                    Long idJoinTable = 0L;
-                                    assert rowSet != null;
-                                    rowFor:
-                                    for(Row row:rowSet){
-                                        Long idTable = row.getLong("id");
-                                        System.out.println(row);
-                                        for(CrudEntity crudEntity:listCrudEntity){
-                                            if(crudEntity.getNameJoinTable().equals(joinTableName)){
-                                                idJoinTable = (Long) RowValueExtractor.getValue(tableRow,crudEntity.getNameFieldIdJoinTable(),Long.class);
-                                                if(Objects.equals(idTable, idJoinTable)){
-                                                    for(Map<Class<?>, String> mapTypeName:crudEntity.getJoinTableTypeName()){
-                                                        for(Map.Entry<Class<?>, String> entryMapJoin:mapTypeName.entrySet()){
-                                                            mapJoin.put(entryMapJoin.getValue(),RowValueExtractor.getValue(row,entryMapJoin.getValue(),entryMapJoin.getKey()));
-                                                        }
+                    return dataJoinTable.onItem()
+                            .transform(jointTableRows -> {
+                                RowSet<Row> rowSet = null;
+                                String joinTableName = "";
+                                for (Map.Entry<String, RowSet> entryMapJoinTable : jointTableRows.entrySet()) {
+                                    rowSet = entryMapJoinTable.getValue();
+                                    joinTableName = entryMapJoinTable.getKey();
+                                }
+                                Map<String, Object> mapJoin = new HashMap<>();
+                                Long idJoinTable = 0L;
+                                assert rowSet != null;
+                                rowFor:
+                                for (Row row : rowSet) {
+                                    Long idTable = row.getLong("id");
+                                    for (CrudEntity crudEntity : listCrudEntity) {
+                                        if (crudEntity.getNameJoinTable().equals(joinTableName)) {
+                                            idJoinTable = (Long) RowValueExtractor.getValue(tableRow, crudEntity.getNameFieldIdJoinTable(), Long.class);
+                                            if (Objects.equals(idTable, idJoinTable)) {
+                                                for (Map<Class<?>, String> mapTypeName : crudEntity.getJoinTableTypeName()) {
+                                                    for (Map.Entry<Class<?>, String> entryMapJoin : mapTypeName.entrySet()) {
+                                                        mapJoin.put(entryMapJoin.getValue(), RowValueExtractor.getValue(row, entryMapJoin.getValue(), entryMapJoin.getKey()));
                                                     }
-                                                    break rowFor;
                                                 }
+                                                break rowFor;
                                             }
                                         }
                                     }
-                                    mapReturn.put(joinTableName,mapJoin);
+                                }
+                                mapReturn.put(joinTableName, mapJoin);
 
-                                    System.out.println("vvvvvvv");
+                                System.out.println("vvvvvvv");
 
-                                    return mapReturn;
-                                });
-                    }
-                    return Uni.createFrom().item(tableRow);
-        });
+                                return mapReturn;
+                            });
+                });
 
-    }
+    }*/
     /*public Multi findAll(E entity){
         String tableName = fieldProcess.getTableName(entity);
         Field[] fieldsTable = fieldProcess.getFields(entity);
